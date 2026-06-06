@@ -83,17 +83,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const tool = b.addExecutable(.{
-        .name = "confirm",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = b.graph.host,
-        }),
-    });
-    const tool_artifact = b.addRunArtifact(tool);
-
-    b.getInstallStep().dependOn(&tool_artifact.step);
-
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
@@ -166,19 +155,34 @@ pub fn build(b: *std.Build) void {
     // and reading its source code will allow you to master it.
 }
 
-pub fn confirm(b: *std.Build, opts: struct {
+pub fn buildWheels(b: *std.Build, opts: struct {
     target: std.Build.ResolvedTarget,
+    artifact: *std.Build.Step.Compile,
 }) *std.Build.Step.Run {
-    _ = opts; // confirm is a build-time tool → host-built; target unused for now
-
     const vf = b.dependencyFromBuildZig(@This(), .{});
+
+    // Install the compiled binary as a Python-importable module: zig-out/wheels/<name>.so
+    const install_module = b.addInstallFileWithDir(
+        opts.artifact.getEmittedBin(),
+        // TODO: What if the prefix is set to something custom?
+        .{ .custom = "wheels" },
+        b.fmt("{s}.so", .{opts.artifact.name}),
+    );
+
     const tool = b.addExecutable(.{
-        .name = "confirm",
+        .name = "build_wheels",
         .root_module = b.createModule(.{
-            .root_source_file = vf.path("src/root.zig"),
+            .root_source_file = vf.path("src/wheels.zig"),
             .target = b.graph.host,
         }),
     });
+
+    const options = b.addOptions();
+    options.addOption([]const u8, "dir", install_module.source);
+
+    tool.root_module.addOptions("config", options);
+
+    tool.step.dependOn(&install_module.step);
 
     return b.addRunArtifact(tool);
 }

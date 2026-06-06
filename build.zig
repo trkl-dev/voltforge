@@ -83,6 +83,17 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const tool = b.addExecutable(.{
+        .name = "confirm",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const tool_artifact = b.addRunArtifact(tool);
+
+    b.getInstallStep().dependOn(&tool_artifact.step);
+
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
@@ -153,4 +164,21 @@ pub fn build(b: *std.Build) void {
     //
     // Lastly, the Zig build system is relatively simple and self-contained,
     // and reading its source code will allow you to master it.
+}
+
+pub fn confirm(b: *std.Build, opts: struct {
+    target: std.Build.ResolvedTarget,
+}) *std.Build.Step.Run {
+    _ = opts; // confirm is a build-time tool → host-built; target unused for now
+
+    const vf = b.dependencyFromBuildZig(@This(), .{});
+    const tool = b.addExecutable(.{
+        .name = "confirm",
+        .root_module = b.createModule(.{
+            .root_source_file = vf.path("src/root.zig"),
+            .target = b.graph.host,
+        }),
+    });
+
+    return b.addRunArtifact(tool);
 }

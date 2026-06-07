@@ -1,0 +1,16 @@
+.{
+    .name = .wheels,
+    .version = "0.0.0",
+    .fingerprint = 0x4c07aa81edec1654, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .voltforge = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -19,15 +19,39 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
 }
 
-pub fn buildWheels(b: *std.Build, artifact: *std.Build.Step.Compile) *std.Build.Step.Run {
+// pub fn buildWheels(b: *std.Build, artifact: *std.Build.Step.Compile) *std.Build.Step.Run {
+pub fn buildWheels(b: *std.Build, name: []const u8, module: *std.Build.Module) *std.Build.Step.Run {
     const vf_build_zig = b.dependencyFromBuildZig(@This(), .{});
+
+    const gen_python_shim = b.addExecutable(.{
+        .name = "gen_python_shim",
+        .root_module = b.createModule(.{
+            .root_source_file = vf_build_zig.path("src/gen.zig"),
+            .target = b.graph.host,
+            .imports = &.{
+                .{ .name = "src", .module = module },
+            },
+        }),
+    });
+
+    const run_gen = b.addRunArtifact(gen_python_shim);
+
+    const lib = b.addLibrary(.{
+        .name = name,
+        .linkage = .dynamic,
+        .root_module = module,
+    });
+
+    lib.linker_allow_shlib_undefined = true;
 
     // Install the compiled binary as a Python-importable module: zig-out/wheels/<name>.so
     const install_module = b.addInstallFileWithDir(
-        artifact.getEmittedBin(),
+        lib.getEmittedBin(),
         .{ .custom = "wheels" },
-        b.fmt("{s}.so", .{artifact.name}),
+        b.fmt("{s}.so", .{lib.name}),
     );
+
+    install_module.step.dependOn(&run_gen.step);
 
     const tool = b.addExecutable(.{
         .name = "build_wheels",

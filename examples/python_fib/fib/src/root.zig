@@ -7,13 +7,12 @@ pub const baz = struct {
     bar: []const u8 = "baz",
 };
 
-/// Something else
-/// Hi there
-// hey hey
+/// Function to add two integers together
+/// This doesn't show up
 pub fn add(
-    /// This is the param foo
+    /// The first number to add
     foo: i32,
-    /// This is the param bar
+    /// The second number to add
     bar: i32,
 ) i32 {
     return foo + bar;

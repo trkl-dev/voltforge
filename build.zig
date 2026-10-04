@@ -38,7 +38,8 @@ pub fn buildWheels(b: *std.Build, name: []const u8, module: *std.Build.Module) *
     });
 
     const shim_step = b.addRunArtifact(gen_python_shim);
-    const output = shim_step.addOutputFileArg2("foo.zig", .{});
+    const output = shim_step.addOutputFileArg2(b.fmt("{s}.zig", .{name}), .{});
+    const stub_output = shim_step.addOutputFileArg2(b.fmt("{s}.pyi", .{name}), .{});
     // TODO: Make this optional. This is what allows stdout to print from gen.zig
     shim_step.stdio = .inherit;
 
@@ -82,9 +83,15 @@ pub fn buildWheels(b: *std.Build, name: []const u8, module: *std.Build.Module) *
     lib.linker_allow_shlib_undefined = true;
 
     // Install the compiled binary as a Python-importable module: zig-out/wheels/<name>.so
-    return b.addInstallFileWithDir(
+    _ = b.addInstallFileWithDir(
         lib.getEmittedBin(),
         .{ .custom = "wheels" },
         b.fmt("{s}.so", .{lib.name}),
+    );
+
+    return b.addInstallFileWithDir(
+        stub_output,
+        .{ .custom = "stubs" },
+        b.fmt("{s}.pyi", .{name}),
     );
 }

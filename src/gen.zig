@@ -13,9 +13,10 @@ const Io = std.Io;
 const Function = struct {
     name: []const u8,
     args: []Arg,
-    docstring: []const u8,
+    docstring: ?[]const u8,
     return_type: ?[]const u8,
     return_format: ?[]const u8,
+    return_python_type: ?[]const u8,
 };
 
 fn print(comptime fmt: []const u8, args: anytype) void {
@@ -28,16 +29,17 @@ fn print(comptime fmt: []const u8, args: anytype) void {
 const PyFormat = struct {
     parse: []const u8,
     build: []const u8,
+    python: []const u8,
 };
 
 /// Currently not supporting unsigned integers, since it doesn't _really_ make sense to expose them to Python?
 /// still considering this though.
 fn pyFormat(comptime T: type) PyFormat {
     return switch (T) {
-        i32 => .{ .parse = "i", .build = "i" },
-        i64 => .{ .parse = "L", .build = "L" },
-        f32 => .{ .parse = "f", .build = "f" },
-        f64 => .{ .parse = "d", .build = "d" },
+        i32 => .{ .parse = "i", .build = "i", .python = "int" },
+        i64 => .{ .parse = "L", .build = "L", .python = "int" },
+        f32 => .{ .parse = "f", .build = "f", .python = "int" },
+        f64 => .{ .parse = "d", .build = "d", .python = "int" },
         else => unreachable,
     };
 }
@@ -46,24 +48,32 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena;
 
-    const file_writer = true;
-
     const input_args = try init.minimal.args.toSlice(arena.allocator());
-    std.debug.assert(input_args.len == 2);
+    std.debug.assert(input_args.len == 3);
 
     var buffer: [2000]u8 = undefined;
     var w: *Io.Writer = undefined;
     var output_file: std.Io.File = undefined;
+
+    var stub_buffer: [2000]u8 = undefined;
+    var stub_w: *Io.Writer = undefined;
+    var stub_output_file: std.Io.File = undefined;
+
+    // Conditionally write the file or print to stdout if we need to inspect
+    // NOTE: Probably a better way to do this
+    const file_writer = true;
     if (file_writer) {
         const output_file_path = input_args[1];
+        const stub_file_path = input_args[2];
         print("output_file_path: {s}\n", .{output_file_path});
 
-        output_file = Io.Dir.cwd().createFile(io, output_file_path, .{}) catch |err| {
-            std.process.fatal("unable to open  '{s}': {s}", .{ output_file_path, @errorName(err) });
-        };
-
+        output_file = try Io.Dir.cwd().createFile(io, output_file_path, .{});
         var writer = output_file.writer(io, &buffer);
         w = &writer.interface;
+
+        stub_output_file = try Io.Dir.cwd().createFile(io, stub_file_path, .{});
+        var stub_file_writer = stub_output_file.writer(io, &stub_buffer);
+        stub_w = &stub_file_writer.interface;
     } else {
         var writer = Io.File.stdout().writer(io, &buffer);
         w = &writer.interface;
@@ -71,8 +81,10 @@ pub fn main(init: std.process.Init) !void {
 
     defer {
         w.flush() catch {};
+        stub_w.flush() catch {};
         if (file_writer) {
             output_file.close(io);
+            stub_output_file.close(io);
         }
     }
 
@@ -98,6 +110,7 @@ pub fn main(init: std.process.Init) !void {
         const fn_name = if (proto.name_token) |t| ast.tokenSlice(t) else unreachable;
         print("fn {s}\n", .{fn_name});
 
+        // NOTE: Only first line of doc comment is being retrieved like this
         const doc_comment = if (try firstDocComment(ast, decl)) |t| ast.tokenSlice(t) else "<null>";
         print("doc: {s}\n", .{doc_comment[4..]});
 
@@ -114,14 +127,17 @@ pub fn main(init: std.process.Init) !void {
                 .name = param_name,
                 .type = null,
                 .format = null,
+                .docstring = doc[4..],
+                .python_type = null,
             });
         }
 
         const current_function = Function{
             .name = fn_name,
-            .docstring = doc_comment,
+            .docstring = doc_comment[4..],
             .return_type = null,
             .return_format = null,
+            .return_python_type = null,
             .args = args.items,
         };
 
@@ -152,12 +168,14 @@ pub fn main(init: std.process.Init) !void {
                 const function = functions.getPtr(decl_name) orelse unreachable;
                 function.return_type = @typeName(f.return_type orelse unreachable);
                 function.return_format = pyFormat(f.return_type orelse unreachable).build;
+                function.return_python_type = pyFormat(f.return_type orelse unreachable).python;
 
                 inline for (f.param_types, 0..) |p, i| {
                     if (p) |param_type| {
                         print("// param: {any} {s}\n", .{ f.param_attrs[i], @typeName(param_type) });
                         function.args[i].type = @typeName(param_type);
                         function.args[i].format = pyFormat(param_type).parse;
+                        function.args[i].python_type = pyFormat(param_type).python;
                         // NOTE: Not sure what to do about this case...
                         switch (@typeInfo(param_type)) {
                             .@"struct" => |s| {
@@ -189,6 +207,8 @@ pub fn main(init: std.process.Init) !void {
     try genPythonMethods(w, module_import_name, functions);
     try genPythonModule(w, module_import_name);
     try genPythonExport(w, module_import_name);
+
+    try genPythonStubs(stub_w, module_import_name, functions);
 
     print("############################\n\n", .{});
     return std.process.cleanExit(io);
@@ -236,11 +256,7 @@ test genPythonHeader {
     try std.testing.expectEqualStrings(expected, header);
 }
 
-const Arg = struct {
-    name: []const u8,
-    type: ?[]const u8,
-    format: ?[]const u8,
-};
+const Arg = struct { name: []const u8, type: ?[]const u8, format: ?[]const u8, docstring: ?[]const u8, python_type: ?[]const u8 };
 
 fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype: []const u8, args: []const Arg) !void {
     std.debug.assert(name.len != 0);
@@ -252,6 +268,8 @@ fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype:
         std.debug.assert(arg.type.?.len != 0);
         std.debug.assert(arg.format != null);
         std.debug.assert(arg.format.?.len != 0);
+        std.debug.assert(arg.python_type != null);
+        std.debug.assert(arg.python_type.?.len != 0);
     }
     try w.print(
         // \\fn {[name]s}(self: [*]Py.PyObject, args: [*]Py.PyObject) [*c]Py.PyObject {{
@@ -300,7 +318,7 @@ test genPythonFunction {
         \\    _ = self;
         \\    var foo: u8 = undefined;
         \\    var bar: u16 = undefined;
-        \\    if (!(Py.PyArg_ParseTuple(args, "l", &foo, &bar,) != 0)) return null;
+        \\    if (!(Py.PyArg_ParseTuple(args, "ii", &foo, &bar,) != 0)) return null;
         \\    const response = core.testName(foo, bar, );
         \\    return Py.Py_BuildValue("i", @as(c_int, response));
         \\}
@@ -310,20 +328,14 @@ test genPythonFunction {
     var writer: Io.Writer = .fixed(&buf);
 
     const args = [_]Arg{
-        .{ .name = "foo", .type = "u8" },
-        .{ .name = "bar", .type = "u16" },
+        .{ .name = "foo", .type = "u8", .format = "i", .docstring = "foo docstring", .python_type = "int" },
+        .{ .name = "bar", .type = "u16", .format = "i", .docstring = "bar docstring", .python_type = "int" },
     };
     try genPythonFunction(&writer, "testName", "i", "c_int", &args);
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);
 }
-
-const Method = struct {
-    name: []const u8,
-    args_type: []const u8,
-    docstring: []const u8,
-};
 
 fn genPythonMethods(w: *Io.Writer, name: []const u8, functions: std.StringHashMap(Function)) !void {
     try w.print(
@@ -345,7 +357,7 @@ fn genPythonMethods(w: *Io.Writer, name: []const u8, functions: std.StringHashMa
         , .{
             .name = function.key_ptr.*,
             .args_type = if (function.value_ptr.args.len == 0) "Py.METH_NOARGS" else "Py.METH_VARARGS",
-            .docstring = function.value_ptr.docstring,
+            .docstring = function.value_ptr.docstring.?,
         });
     }
     try w.print(
@@ -391,8 +403,8 @@ test genPythonMethods {
     defer functions.deinit();
 
     var args = [_]Arg{
-        .{ .name = "foo", .type = "u8" },
-        .{ .name = "bar", .type = "u16" },
+        .{ .name = "foo", .type = "u8", .format = "i", .docstring = "foo docstring", .python_type = "int" },
+        .{ .name = "bar", .type = "u16", .format = "i", .docstring = "foo docstring", .python_type = "int" },
     };
 
     try functions.put("foo", Function{
@@ -401,6 +413,8 @@ test genPythonMethods {
         .return_type = null,
         // TODO: Check if this is okay
         .args = &args,
+        .return_format = "i",
+        .return_python_type = "int",
     });
 
     try functions.put("bar", Function{
@@ -409,6 +423,8 @@ test genPythonMethods {
         .return_type = null,
         // TODO: Check if this is okay
         .args = &[_]Arg{},
+        .return_format = "i",
+        .return_python_type = "int",
     });
 
     try genPythonMethods(&writer, "testName", functions);
@@ -498,6 +514,122 @@ test genPythonExport {
     var writer: Io.Writer = .fixed(&buf);
 
     try genPythonExport(&writer, "testFoo");
+
+    const header = writer.buffered();
+    try std.testing.expectEqualStrings(expected, header);
+}
+
+fn genPythonStubs(w: *Io.Writer, name: []const u8, functions: std.StringHashMap(Function)) !void {
+    try w.print(
+        \\"""{[name]s} extension module."""
+        \\
+        \\
+    , .{
+        .name = name,
+    });
+    var func_iterator = functions.iterator();
+    while (func_iterator.next()) |function| {
+        try w.print(
+            \\
+            \\def {[name]s}(
+            \\
+        , .{
+            .name = function.key_ptr.*,
+        });
+
+        for (function.value_ptr.args) |arg| {
+            if (arg.docstring != null) {
+                try w.print("    # {[docstring]s}\n", .{ .docstring = arg.docstring.? });
+            }
+            try w.print(
+                \\    {[name]s}: {[type]s},
+                \\
+            , .{
+                .name = arg.name,
+                .type = arg.python_type.?,
+            });
+        }
+        try w.print(
+            \\) -> {[name]s}:
+            \\
+        , .{
+            .name = function.value_ptr.return_python_type.?,
+        });
+        try w.print(
+            \\    """{[docstring]s}
+            \\
+        , .{
+            .docstring = function.value_ptr.docstring.?,
+        });
+        for (function.value_ptr.args) |arg| {
+            if (arg.docstring != null) {
+                try w.print("    :param {[name]s}: {[docstring]s}\n", .{
+                    .name = arg.name,
+                    .docstring = arg.docstring.?,
+                });
+            }
+        }
+        try w.print(
+            \\    """
+            \\
+        , .{});
+    }
+}
+
+test genPythonStubs {
+    const expected =
+        \\"""testName extension module."""
+        \\
+        \\
+        \\def bar(
+        \\) -> int:
+        \\    """this is the function 'bar'
+        \\    """
+        \\
+        \\def foo(
+        \\    # foo docstring
+        \\    foo: int,
+        \\    # foo docstring
+        \\    bar: int,
+        \\) -> int:
+        \\    """this is the function 'foo'
+        \\    :param foo: foo docstring
+        \\    :param bar: bar docstring
+        \\    """
+        \\
+    ;
+    var buf: [512]u8 = undefined;
+    var writer: Io.Writer = .fixed(&buf);
+
+    var functions = std.hash_map.StringHashMap(Function).init(std.testing.allocator);
+    defer functions.deinit();
+
+    var args = [_]Arg{
+        .{ .name = "baz", .type = "u8", .format = "i", .docstring = "baz docstring", .python_type = "int" },
+        .{ .name = "bar", .type = "u16", .format = "i", .docstring = "bar docstring", .python_type = "int" },
+    };
+
+    try functions.put("foo", Function{
+        .name = "foo",
+        .docstring = "this is the function 'foo'",
+        .return_type = null,
+        // TODO: Check if this is okay
+        .args = &args,
+        .return_format = "i",
+        .return_python_type = "int",
+    });
+
+    try functions.put("bar", Function{
+        .name = "bar",
+        .docstring = "this is the function 'bar'",
+        .return_type = null,
+        // TODO: Check if this is okay
+        .args = &[_]Arg{},
+        .return_format = "i",
+        .return_python_type = "int",
+    });
+
+    try genPythonStubs(&writer, "testName", functions);
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);

@@ -316,6 +316,7 @@ test genPythonHeader {
         \\const core = @import("testName");
         \\const Py = @import("python");
         \\
+        \\
     ;
     var buf: [256]u8 = undefined;
     var writer: Io.Writer = .fixed(&buf);
@@ -379,11 +380,11 @@ fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype:
 
 test genPythonFunction {
     const expected =
-        \\fn testName(self: [*c]Py.PyObject, args: [*c]Py.PyObject) callconv(.c) [*]Py.PyObject {
+        \\fn testName(self: [*c]Py.PyObject, args: [*c]Py.PyObject) callconv(.c) [*c]Py.PyObject {
         \\    _ = self;
         \\    var foo: u8 = undefined;
         \\    var bar: u16 = undefined;
-        \\    if (!(c.PyArg_ParseTuple(args, "ll", &foo, &bar,) != 0)) return null;
+        \\    if (!(Py.PyArg_ParseTuple(args, "l", &foo, &bar,) != 0)) return null;
         \\    const response = core.testName(foo, bar, );
         \\    return Py.Py_BuildValue("i", @as(c_int, response));
         \\}
@@ -447,16 +448,16 @@ test genPythonMethods {
     const expected =
         \\var testNameMethods = [_]Py.PyMethodDef{
         \\    Py.PyMethodDef{
-        \\        .ml_name = "foo",
-        \\        .ml_meth = foo,
-        \\        .ml_flags = Py.METHVARARGS,
-        \\        .ml_doc = "this is the function 'foo'",
-        \\    },
-        \\    Py.PyMethodDef{
         \\        .ml_name = "bar",
         \\        .ml_meth = bar,
-        \\        .ml_flags = Py.METHNOARGS,
+        \\        .ml_flags = Py.METH_NOARGS,
         \\        .ml_doc = "this is the function 'bar'",
+        \\    },
+        \\    Py.PyMethodDef{
+        \\        .ml_name = "foo",
+        \\        .ml_meth = foo,
+        \\        .ml_flags = Py.METH_VARARGS,
+        \\        .ml_doc = "this is the function 'foo'",
         \\    },
         \\    Py.PyMethodDef{
         \\        .ml_name = null,
@@ -470,11 +471,35 @@ test genPythonMethods {
     var buf: [512]u8 = undefined;
     var writer: Io.Writer = .fixed(&buf);
 
-    const methods = [_]Method{
-        .{ .name = "foo", .args_type = "Py.METHVARARGS", .docstring = "this is the function 'foo'" },
-        .{ .name = "bar", .args_type = "Py.METHNOARGS", .docstring = "this is the function 'bar'" },
+    var functions = std.hash_map.StringHashMap(Function).init(std.testing.allocator);
+    defer functions.deinit();
+
+    var args = [_]Arg{
+        .{ .name = "foo", .type = "u8" },
+        .{ .name = "bar", .type = "u16" },
     };
-    try genPythonMethods(&writer, "testName", &methods);
+
+    try functions.put("foo", Function{
+        .name = "foo",
+        .docstring = "this is the function 'foo'",
+        .return_type = null,
+        // TODO: Check if this is okay
+        .args = &args,
+    });
+
+    try functions.put("bar", Function{
+        .name = "bar",
+        .docstring = "this is the function 'bar'",
+        .return_type = null,
+        // TODO: Check if this is okay
+        .args = &[_]Arg{},
+    });
+
+    // const methods = [_]Method{
+    //     .{ .name = "foo", .args_type = "Py.METHVARARGS", .docstring = "" },
+    //     .{ .name = "bar", .args_type = "Py.METHNOARGS", .docstring = "this is the function 'bar'" },
+    // };
+    try genPythonMethods(&writer, "testName", functions);
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);
@@ -522,7 +547,7 @@ test genPythonModule {
         \\    .m_name = "testModule",
         \\    .m_doc = null,
         \\    .m_size = -1,
-        \\    .m_methods = &testNameMethods,
+        \\    .m_methods = &testModuleMethods,
         \\    .m_slots = null,
         \\    .m_traverse = null,
         \\    .m_clear = null,
@@ -533,7 +558,7 @@ test genPythonModule {
     var buf: [512]u8 = undefined;
     var writer: Io.Writer = .fixed(&buf);
 
-    try genPythonModule(&writer, "testModule", "testName");
+    try genPythonModule(&writer, "testModule");
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);
@@ -554,13 +579,13 @@ test genPythonExport {
     const expected =
         \\pub export fn PyInit_testFoo() [*]Py.PyObject {
         \\    return Py.PyModule_Create(&testFooModule);
-        \\};
+        \\}
         \\
     ;
     var buf: [512]u8 = undefined;
     var writer: Io.Writer = .fixed(&buf);
 
-    try genPythonExport(&writer, "testFoo", "testModule");
+    try genPythonExport(&writer, "testFoo");
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);

@@ -587,13 +587,13 @@ test genPythonStubs {
         \\    """
         \\
         \\def foo(
-        \\    # foo docstring
-        \\    foo: int,
-        \\    # foo docstring
+        \\    # baz docstring
+        \\    baz: int,
+        \\    # bar docstring
         \\    bar: int,
         \\) -> int:
         \\    """this is the function 'foo'
-        \\    :param foo: foo docstring
+        \\    :param baz: baz docstring
         \\    :param bar: bar docstring
         \\    """
         \\

@@ -8,7 +8,11 @@ if __name__ == "__main__":
     #
     # for i in fib_list:
     #     print(i)
+
     val = add(12, 18)
-    assert val == 30, "uh oh, we failed"
+    assert val == 30, f"uh oh, we failed, got: {val}"
+
+    val = add(12, -18)
+    assert val == -6, f"uh oh, we failed, got: {val}"
 
     print("main.py test passed.")

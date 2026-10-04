@@ -17,6 +17,7 @@ const Function = struct {
     args: []Arg,
     docstring: []const u8,
     return_type: ?[]const u8,
+    return_format: ?[]const u8,
 };
 
 fn print(comptime fmt: []const u8, args: anytype) void {
@@ -24,6 +25,30 @@ fn print(comptime fmt: []const u8, args: anytype) void {
     if (should_print) {
         std.debug.print(fmt, args);
     }
+}
+
+const format_map = std.StaticStringMapWithEql(
+    []const u8,
+    std.static_string_map.eqlAsciiIgnoreCase,
+).initComptime(.{
+    .{ "i32", "l" },
+});
+
+const PyFormat = struct {
+    parse: []const u8,
+    build: []const u8,
+};
+
+/// Currently not supporting unsigned integers, since it doesn't _really_ make sense to expose them to Python?
+/// still considering this though.
+fn pyFormat(comptime T: type) PyFormat {
+    return switch (T) {
+        i32 => .{ .parse = "i", .build = "i" },
+        i64 => .{ .parse = "L", .build = "L" },
+        f32 => .{ .parse = "f", .build = "f" },
+        f64 => .{ .parse = "d", .build = "d" },
+        else => unreachable,
+    };
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -110,6 +135,7 @@ pub fn main(init: std.process.Init) !void {
             try args.append(Arg{
                 .name = param_name,
                 .type = null,
+                .format = null,
             });
         }
 
@@ -117,6 +143,7 @@ pub fn main(init: std.process.Init) !void {
             .name = fn_name,
             .docstring = doc_comment,
             .return_type = null,
+            .return_format = null,
             // TODO: Check if this is okay
             .args = args.items,
         };
@@ -157,12 +184,14 @@ pub fn main(init: std.process.Init) !void {
             .@"fn" => |f| {
                 const function = functions.getPtr(decl_name) orelse unreachable;
                 function.return_type = @typeName(f.return_type orelse unreachable);
+                function.return_format = pyFormat(f.return_type orelse unreachable).build;
 
                 inline for (f.param_types, 0..) |p, i| {
                     // p.type is ?type: null for generic/anytype params, otherwise the param type itself.
                     if (p) |param_type| {
                         print("// param: {any} {s}\n", .{ f.param_attrs[i], @typeName(param_type) });
                         function.args[i].type = @typeName(param_type);
+                        function.args[i].format = pyFormat(param_type).parse;
                         // NOTE: Not sure what to do about this case...
                         switch (@typeInfo(param_type)) {
                             .@"struct" => |s| {
@@ -187,8 +216,9 @@ pub fn main(init: std.process.Init) !void {
     var func_iterator = functions.iterator();
     while (func_iterator.next()) |function| {
         const return_type = function.value_ptr.return_type orelse unreachable;
+        const return_format = function.value_ptr.return_format orelse unreachable;
         // print("{s}\n", .{return_type});
-        try genPythonFunction(w, function.key_ptr.*, "i", return_type, function.value_ptr.args);
+        try genPythonFunction(w, function.key_ptr.*, return_format, return_type, function.value_ptr.args);
     }
 
     try genPythonMethods(w, module_import_name, functions);
@@ -330,6 +360,7 @@ test genPythonHeader {
 const Arg = struct {
     name: []const u8,
     type: ?[]const u8,
+    format: ?[]const u8,
 };
 
 fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype: []const u8, args: []const Arg) !void {
@@ -340,6 +371,8 @@ fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype:
         std.debug.assert(arg.name.len != 0);
         std.debug.assert(arg.type != null);
         std.debug.assert(arg.type.?.len != 0);
+        std.debug.assert(arg.format != null);
+        std.debug.assert(arg.format.?.len != 0);
     }
     try w.print(
         // \\fn {[name]s}(self: [*]Py.PyObject, args: [*]Py.PyObject) [*c]Py.PyObject {{
@@ -359,8 +392,8 @@ fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype:
         });
     }
     try w.print("    if (!(Py.PyArg_ParseTuple(args, \"", .{});
-    for (args) |_| {
-        try w.print("l", .{});
+    for (args) |arg| {
+        try w.print("{s}", .{arg.format orelse unreachable});
     }
     try w.print("\",", .{});
     for (args) |arg| {

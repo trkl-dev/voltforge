@@ -1,0 +1,5 @@
+[project]
+name = "fib"
+version = "1.0.0"
+description = "Zero-dependency Python + Zig build"
+requires-python = ">=3.9"

@@ -8,10 +8,15 @@ pub const baz = struct {
     bar: []const u8 = "baz",
 };
 
+/// Something else
 /// Hi there
-pub fn should_return_123(args: struct { hi: u32 }) u32 {
-    _ = args;
-    return 123;
+// hey hey
+pub fn should_return_123(
+    /// This is the param foo
+    foo: i32,
+) u32 {
+    _ = foo;
+    return 124;
 }
 
 // const std = @import("std");

@@ -1,3 +1,3 @@
-pub fn foo() u32 {
+pub fn functionFromUtils() u32 {
     return 666;
 }

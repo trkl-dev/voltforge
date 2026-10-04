@@ -1,4 +1,4 @@
-from fib import should_return_123
+from fib import add
 
 if __name__ == "__main__":
 
@@ -8,7 +8,7 @@ if __name__ == "__main__":
     #
     # for i in fib_list:
     #     print(i)
-    val = should_return_123(1234)
-    assert val == 123, "uh oh, we failed"
+    val = add(12, 18)
+    assert val == 30, "uh oh, we failed"
 
     print("main.py test passed.")

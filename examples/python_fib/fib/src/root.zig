@@ -10,11 +10,11 @@ pub const baz = struct {
 /// Something else
 /// Hi there
 // hey hey
-pub fn should_return_123(
+pub fn add(
     /// This is the param foo
     foo: i32,
-) u32 {
-    _ = foo;
-    // std.debug.print("hi there from should_return_123\n", .{});
-    return 123;
+    /// This is the param bar
+    bar: i32,
+) i32 {
+    return foo + bar;
 }

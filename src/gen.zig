@@ -358,7 +358,11 @@ fn genPythonFunction(w: *Io.Writer, name: []const u8, format: []const u8, ctype:
             .type = arg.type.?,
         });
     }
-    try w.print("    if (!(Py.PyArg_ParseTuple(args, \"l\",", .{});
+    try w.print("    if (!(Py.PyArg_ParseTuple(args, \"", .{});
+    for (args) |_| {
+        try w.print("l", .{});
+    }
+    try w.print("\",", .{});
     for (args) |arg| {
         try w.print(" &{[name]s},", .{ .name = arg.name });
     }

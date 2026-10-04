@@ -83,15 +83,18 @@ pub fn buildWheels(b: *std.Build, name: []const u8, module: *std.Build.Module) *
     lib.linker_allow_shlib_undefined = true;
 
     // Install the compiled binary as a Python-importable module: zig-out/wheels/<name>.so
-    _ = b.addInstallFileWithDir(
+    const lib_install = b.addInstallFileWithDir(
         lib.getEmittedBin(),
         .{ .custom = "wheels" },
         b.fmt("{s}.so", .{lib.name}),
     );
 
-    return b.addInstallFileWithDir(
+    const stubs_install = b.addInstallFileWithDir(
         stub_output,
         .{ .custom = "stubs" },
         b.fmt("{s}.pyi", .{name}),
     );
+
+    stubs_install.step.dependOn(&lib_install.step);
+    return stubs_install;
 }

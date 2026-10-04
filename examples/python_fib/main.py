@@ -1,10 +1,16 @@
-from fib import add
+import unittest
 
-if __name__ == "__main__":
-    val = add(12, 18)
-    assert val == 30, f"uh oh, we failed, got: {val}"
+from fib import add, sub
 
-    val = add(12, -18)
-    assert val == -6, f"uh oh, we failed, got: {val}"
 
-    print("main.py test passed.")
+class TestStringMethods(unittest.TestCase):
+
+    def test_add(self):
+        self.assertEqual(add(12, 18), 30)
+
+    def test_sub(self):
+        self.assertEqual(sub(12, 18), -6)
+
+
+if __name__ == '__main__':
+    _ = unittest.main()

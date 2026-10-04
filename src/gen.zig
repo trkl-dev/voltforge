@@ -77,6 +77,7 @@ pub fn main(init: std.process.Init) !void {
     } else {
         var writer = Io.File.stdout().writer(io, &buffer);
         w = &writer.interface;
+        stub_w = &writer.interface;
     }
 
     defer {
@@ -213,6 +214,48 @@ pub fn main(init: std.process.Init) !void {
     print("############################\n\n", .{});
     return std.process.cleanExit(io);
 }
+
+// fn parseAst(allocator: std.mem.Allocator, ast: Ast) []Function {
+//     var buf: [1]Ast.Node.Index = undefined;
+//     for (ast.rootDecls()) |decl| {
+//         const proto = ast.fullFnProto(&buf, decl) orelse continue;
+//         const fn_name = if (proto.name_token) |t| ast.tokenSlice(t) else unreachable;
+//         print("fn {s}\n", .{fn_name});
+//
+//         // NOTE: Only first line of doc comment is being retrieved like this
+//         const doc_comment = if (try firstDocComment(ast, decl)) |t| ast.tokenSlice(t) else "<null>";
+//         print("doc: {s}\n", .{doc_comment[4..]});
+//
+//         print("params:\n", .{});
+//
+//         var args = std.array_list.Managed(Arg).init(allocator);
+//         var it = proto.iterate(&ast);
+//         while (it.next()) |param| {
+//             const doc = if (param.first_doc_comment) |t| ast.tokenSlice(t) else "<null>";
+//             print("  doc: {s}\n", .{doc[4..]}); // Remove `/// ` from start of doc comment
+//             const param_name = if (param.name_token) |t| ast.tokenSlice(t) else "_";
+//             print("  param: {s}\n", .{param_name});
+//             try args.append(Arg{
+//                 .name = param_name,
+//                 .type = null,
+//                 .format = null,
+//                 .docstring = doc[4..],
+//                 .python_type = null,
+//             });
+//         }
+//
+//         const current_function = Function{
+//             .name = fn_name,
+//             .docstring = doc_comment[4..],
+//             .return_type = null,
+//             .return_format = null,
+//             .return_python_type = null,
+//             .args = args.items,
+//         };
+//
+//         try functions.put(current_function.name, current_function);
+//     }
+// }
 
 fn firstDocComment(ast: Ast, node: Ast.Node.Index) !?Ast.TokenIndex {
     const first = ast.firstToken(node);

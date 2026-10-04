@@ -17,3 +17,13 @@ pub fn add(
 ) i32 {
     return foo + bar;
 }
+
+/// Function to subtract two integers
+pub fn sub(
+    /// The first number to sub
+    foo: i32,
+    /// The second number to sub
+    bar: i32,
+) i32 {
+    return foo - bar;
+}

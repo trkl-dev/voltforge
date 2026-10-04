@@ -98,58 +98,15 @@ pub fn main(init: std.process.Init) !void {
     var reader = file.reader(io, &read_buf);
     const contents = try std.zig.readSourceFileToEndAlloc(arena.allocator(), &reader);
 
-    var ast = try Ast.parse(arena.allocator(), contents, .{ .mode = .zig });
-
-    var functions = std.hash_map.StringHashMap(Function).init(arena.allocator());
-
-    // #################
-    // # PARSE THE AST #
-    // #################
-    var buf: [1]Ast.Node.Index = undefined;
-    for (ast.rootDecls()) |decl| {
-        const proto = ast.fullFnProto(&buf, decl) orelse continue;
-        const fn_name = if (proto.name_token) |t| ast.tokenSlice(t) else unreachable;
-        print("fn {s}\n", .{fn_name});
-
-        // NOTE: Only first line of doc comment is being retrieved like this
-        const doc_comment = if (try firstDocComment(ast, decl)) |t| ast.tokenSlice(t) else "<null>";
-        print("doc: {s}\n", .{doc_comment[4..]});
-
-        print("params:\n", .{});
-
-        var args = std.array_list.Managed(Arg).init(arena.allocator());
-        var it = proto.iterate(&ast);
-        while (it.next()) |param| {
-            const doc = if (param.first_doc_comment) |t| ast.tokenSlice(t) else "<null>";
-            print("  doc: {s}\n", .{doc[4..]}); // Remove `/// ` from start of doc comment
-            const param_name = if (param.name_token) |t| ast.tokenSlice(t) else "_";
-            print("  param: {s}\n", .{param_name});
-            try args.append(Arg{
-                .name = param_name,
-                .type = null,
-                .format = null,
-                .docstring = doc[4..],
-                .python_type = null,
-            });
-        }
-
-        const current_function = Function{
-            .name = fn_name,
-            .docstring = doc_comment[4..],
-            .return_type = null,
-            .return_format = null,
-            .return_python_type = null,
-            .args = args.items,
-        };
-
-        try functions.put(current_function.name, current_function);
-    }
+    const ast = try Ast.parse(arena.allocator(), contents, .{ .mode = .zig });
+    const functions = try parseAst(arena.allocator(), ast);
 
     // ###################
     // # TYPE INSPECTION #
     // ###################
     const info = @typeInfo(src);
 
+    comptime var func_number = 0;
     inline for (info.@"struct".decl_names) |decl_name| {
         print("{s}\n", .{decl_name});
         const field = @field(src, decl_name);
@@ -166,17 +123,16 @@ pub fn main(init: std.process.Init) !void {
             }
         } else switch (@typeInfo(field_type)) {
             .@"fn" => |f| {
-                const function = functions.getPtr(decl_name) orelse unreachable;
-                function.return_type = @typeName(f.return_type orelse unreachable);
-                function.return_format = pyFormat(f.return_type orelse unreachable).build;
-                function.return_python_type = pyFormat(f.return_type orelse unreachable).python;
+                functions[func_number].return_type = @typeName(f.return_type orelse unreachable);
+                functions[func_number].return_format = pyFormat(f.return_type orelse unreachable).build;
+                functions[func_number].return_python_type = pyFormat(f.return_type orelse unreachable).python;
 
                 inline for (f.param_types, 0..) |p, i| {
                     if (p) |param_type| {
                         print("// param: {any} {s}\n", .{ f.param_attrs[i], @typeName(param_type) });
-                        function.args[i].type = @typeName(param_type);
-                        function.args[i].format = pyFormat(param_type).parse;
-                        function.args[i].python_type = pyFormat(param_type).python;
+                        functions[func_number].args[i].type = @typeName(param_type);
+                        functions[func_number].args[i].format = pyFormat(param_type).parse;
+                        functions[func_number].args[i].python_type = pyFormat(param_type).python;
                         // NOTE: Not sure what to do about this case...
                         switch (@typeInfo(param_type)) {
                             .@"struct" => |s| {
@@ -191,6 +147,7 @@ pub fn main(init: std.process.Init) !void {
                         print("// generic/anytype param (no concrete type)\n", .{});
                     }
                 }
+                func_number += 1;
             },
             else => {},
         }
@@ -198,11 +155,11 @@ pub fn main(init: std.process.Init) !void {
 
     try genPythonHeader(w, module_import_name);
 
-    var func_iterator = functions.iterator();
-    while (func_iterator.next()) |function| {
-        const return_type = function.value_ptr.return_type orelse unreachable;
-        const return_format = function.value_ptr.return_format orelse unreachable;
-        try genPythonFunction(w, function.key_ptr.*, return_format, return_type, function.value_ptr.args);
+    // var func_iterator = functions.iterator();
+    for (functions) |function| {
+        const return_type = function.return_type orelse unreachable;
+        const return_format = function.return_format orelse unreachable;
+        try genPythonFunction(w, function.name, return_format, return_type, function.args);
     }
 
     try genPythonMethods(w, module_import_name, functions);
@@ -215,47 +172,51 @@ pub fn main(init: std.process.Init) !void {
     return std.process.cleanExit(io);
 }
 
-// fn parseAst(allocator: std.mem.Allocator, ast: Ast) []Function {
-//     var buf: [1]Ast.Node.Index = undefined;
-//     for (ast.rootDecls()) |decl| {
-//         const proto = ast.fullFnProto(&buf, decl) orelse continue;
-//         const fn_name = if (proto.name_token) |t| ast.tokenSlice(t) else unreachable;
-//         print("fn {s}\n", .{fn_name});
-//
-//         // NOTE: Only first line of doc comment is being retrieved like this
-//         const doc_comment = if (try firstDocComment(ast, decl)) |t| ast.tokenSlice(t) else "<null>";
-//         print("doc: {s}\n", .{doc_comment[4..]});
-//
-//         print("params:\n", .{});
-//
-//         var args = std.array_list.Managed(Arg).init(allocator);
-//         var it = proto.iterate(&ast);
-//         while (it.next()) |param| {
-//             const doc = if (param.first_doc_comment) |t| ast.tokenSlice(t) else "<null>";
-//             print("  doc: {s}\n", .{doc[4..]}); // Remove `/// ` from start of doc comment
-//             const param_name = if (param.name_token) |t| ast.tokenSlice(t) else "_";
-//             print("  param: {s}\n", .{param_name});
-//             try args.append(Arg{
-//                 .name = param_name,
-//                 .type = null,
-//                 .format = null,
-//                 .docstring = doc[4..],
-//                 .python_type = null,
-//             });
-//         }
-//
-//         const current_function = Function{
-//             .name = fn_name,
-//             .docstring = doc_comment[4..],
-//             .return_type = null,
-//             .return_format = null,
-//             .return_python_type = null,
-//             .args = args.items,
-//         };
-//
-//         try functions.put(current_function.name, current_function);
-//     }
-// }
+fn parseAst(allocator: std.mem.Allocator, ast: Ast) ![]Function {
+    var functions = try std.ArrayList(Function).initCapacity(allocator, 1);
+
+    var buf: [1]Ast.Node.Index = undefined;
+    for (ast.rootDecls()) |decl| {
+        const proto = ast.fullFnProto(&buf, decl) orelse continue;
+        const fn_name = if (proto.name_token) |t| ast.tokenSlice(t) else unreachable;
+        print("fn {s}\n", .{fn_name});
+
+        // NOTE: Only first line of doc comment is being retrieved like this
+        const doc_comment = if (try firstDocComment(ast, decl)) |t| ast.tokenSlice(t) else "<null>";
+        print("doc: {s}\n", .{doc_comment[4..]});
+
+        print("params:\n", .{});
+
+        var args = std.array_list.Managed(Arg).init(allocator);
+        var it = proto.iterate(&ast);
+        while (it.next()) |param| {
+            const doc = if (param.first_doc_comment) |t| ast.tokenSlice(t) else "<null>";
+            print("  doc: {s}\n", .{doc[4..]}); // Remove `/// ` from start of doc comment
+            const param_name = if (param.name_token) |t| ast.tokenSlice(t) else "_";
+            print("  param: {s}\n", .{param_name});
+            try args.append(Arg{
+                .name = param_name,
+                .type = null,
+                .format = null,
+                .docstring = doc[4..],
+                .python_type = null,
+            });
+        }
+
+        const function = Function{
+            .name = fn_name,
+            .docstring = doc_comment[4..],
+            .return_type = null,
+            .return_format = null,
+            .return_python_type = null,
+            .args = args.items,
+        };
+
+        try functions.append(allocator, function);
+    }
+
+    return functions.items;
+}
 
 fn firstDocComment(ast: Ast, node: Ast.Node.Index) !?Ast.TokenIndex {
     const first = ast.firstToken(node);
@@ -380,15 +341,14 @@ test genPythonFunction {
     try std.testing.expectEqualStrings(expected, header);
 }
 
-fn genPythonMethods(w: *Io.Writer, name: []const u8, functions: std.StringHashMap(Function)) !void {
+fn genPythonMethods(w: *Io.Writer, name: []const u8, functions: []Function) !void {
     try w.print(
         \\var {[name]s}Methods = [_]Py.PyMethodDef{{
         \\
     , .{
         .name = name,
     });
-    var func_iterator = functions.iterator();
-    while (func_iterator.next()) |function| {
+    for (functions) |function| {
         try w.print(
             \\    Py.PyMethodDef{{
             \\        .ml_name = "{[name]s}",
@@ -398,9 +358,9 @@ fn genPythonMethods(w: *Io.Writer, name: []const u8, functions: std.StringHashMa
             \\    }},
             \\
         , .{
-            .name = function.key_ptr.*,
-            .args_type = if (function.value_ptr.args.len == 0) "Py.METH_NOARGS" else "Py.METH_VARARGS",
-            .docstring = function.value_ptr.docstring.?,
+            .name = function.name,
+            .args_type = if (function.args.len == 0) "Py.METH_NOARGS" else "Py.METH_VARARGS",
+            .docstring = function.docstring.?,
         });
     }
     try w.print(
@@ -419,16 +379,16 @@ test genPythonMethods {
     const expected =
         \\var testNameMethods = [_]Py.PyMethodDef{
         \\    Py.PyMethodDef{
-        \\        .ml_name = "bar",
-        \\        .ml_meth = bar,
-        \\        .ml_flags = Py.METH_NOARGS,
-        \\        .ml_doc = "this is the function 'bar'",
-        \\    },
-        \\    Py.PyMethodDef{
         \\        .ml_name = "foo",
         \\        .ml_meth = foo,
         \\        .ml_flags = Py.METH_VARARGS,
         \\        .ml_doc = "this is the function 'foo'",
+        \\    },
+        \\    Py.PyMethodDef{
+        \\        .ml_name = "bar",
+        \\        .ml_meth = bar,
+        \\        .ml_flags = Py.METH_NOARGS,
+        \\        .ml_doc = "this is the function 'bar'",
         \\    },
         \\    Py.PyMethodDef{
         \\        .ml_name = null,
@@ -442,35 +402,33 @@ test genPythonMethods {
     var buf: [512]u8 = undefined;
     var writer: Io.Writer = .fixed(&buf);
 
-    var functions = std.hash_map.StringHashMap(Function).init(std.testing.allocator);
-    defer functions.deinit();
-
     var args = [_]Arg{
         .{ .name = "foo", .type = "u8", .format = "i", .docstring = "foo docstring", .python_type = "int" },
         .{ .name = "bar", .type = "u16", .format = "i", .docstring = "foo docstring", .python_type = "int" },
     };
 
-    try functions.put("foo", Function{
-        .name = "foo",
-        .docstring = "this is the function 'foo'",
-        .return_type = null,
-        // TODO: Check if this is okay
-        .args = &args,
-        .return_format = "i",
-        .return_python_type = "int",
-    });
+    var functions = [_]Function{
+        .{
+            .name = "foo",
+            .docstring = "this is the function 'foo'",
+            .return_type = null,
+            // TODO: Check if this is okay
+            .args = &args,
+            .return_format = "i",
+            .return_python_type = "int",
+        },
+        .{
+            .name = "bar",
+            .docstring = "this is the function 'bar'",
+            .return_type = null,
+            // TODO: Check if this is okay
+            .args = &[_]Arg{},
+            .return_format = "i",
+            .return_python_type = "int",
+        },
+    };
 
-    try functions.put("bar", Function{
-        .name = "bar",
-        .docstring = "this is the function 'bar'",
-        .return_type = null,
-        // TODO: Check if this is okay
-        .args = &[_]Arg{},
-        .return_format = "i",
-        .return_python_type = "int",
-    });
-
-    try genPythonMethods(&writer, "testName", functions);
+    try genPythonMethods(&writer, "testName", &functions);
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);
@@ -562,7 +520,7 @@ test genPythonExport {
     try std.testing.expectEqualStrings(expected, header);
 }
 
-fn genPythonStubs(w: *Io.Writer, name: []const u8, functions: std.StringHashMap(Function)) !void {
+fn genPythonStubs(w: *Io.Writer, name: []const u8, functions: []Function) !void {
     try w.print(
         \\"""{[name]s} extension module."""
         \\
@@ -570,17 +528,16 @@ fn genPythonStubs(w: *Io.Writer, name: []const u8, functions: std.StringHashMap(
     , .{
         .name = name,
     });
-    var func_iterator = functions.iterator();
-    while (func_iterator.next()) |function| {
+    for (functions) |function| {
         try w.print(
             \\
             \\def {[name]s}(
             \\
         , .{
-            .name = function.key_ptr.*,
+            .name = function.name,
         });
 
-        for (function.value_ptr.args) |arg| {
+        for (function.args) |arg| {
             if (arg.docstring != null) {
                 try w.print("    # {[docstring]s}\n", .{ .docstring = arg.docstring.? });
             }
@@ -596,15 +553,15 @@ fn genPythonStubs(w: *Io.Writer, name: []const u8, functions: std.StringHashMap(
             \\) -> {[name]s}:
             \\
         , .{
-            .name = function.value_ptr.return_python_type.?,
+            .name = function.return_python_type.?,
         });
         try w.print(
             \\    """{[docstring]s}
             \\
         , .{
-            .docstring = function.value_ptr.docstring.?,
+            .docstring = function.docstring.?,
         });
-        for (function.value_ptr.args) |arg| {
+        for (function.args) |arg| {
             if (arg.docstring != null) {
                 try w.print("    :param {[name]s}: {[docstring]s}\n", .{
                     .name = arg.name,
@@ -624,55 +581,54 @@ test genPythonStubs {
         \\"""testName extension module."""
         \\
         \\
+        \\def foo(
+        \\    # bar docstring
+        \\    bar: int,
+        \\    # baz docstring
+        \\    baz: int,
+        \\) -> int:
+        \\    """this is the function 'foo'
+        \\    :param bar: bar docstring
+        \\    :param baz: baz docstring
+        \\    """
+        \\
         \\def bar(
         \\) -> int:
         \\    """this is the function 'bar'
-        \\    """
-        \\
-        \\def foo(
-        \\    # baz docstring
-        \\    baz: int,
-        \\    # bar docstring
-        \\    bar: int,
-        \\) -> int:
-        \\    """this is the function 'foo'
-        \\    :param baz: baz docstring
-        \\    :param bar: bar docstring
         \\    """
         \\
     ;
     var buf: [512]u8 = undefined;
     var writer: Io.Writer = .fixed(&buf);
 
-    var functions = std.hash_map.StringHashMap(Function).init(std.testing.allocator);
-    defer functions.deinit();
-
     var args = [_]Arg{
-        .{ .name = "baz", .type = "u8", .format = "i", .docstring = "baz docstring", .python_type = "int" },
         .{ .name = "bar", .type = "u16", .format = "i", .docstring = "bar docstring", .python_type = "int" },
+        .{ .name = "baz", .type = "u8", .format = "i", .docstring = "baz docstring", .python_type = "int" },
     };
 
-    try functions.put("foo", Function{
-        .name = "foo",
-        .docstring = "this is the function 'foo'",
-        .return_type = null,
-        // TODO: Check if this is okay
-        .args = &args,
-        .return_format = "i",
-        .return_python_type = "int",
-    });
+    var functions = [_]Function{
+        .{
+            .name = "foo",
+            .docstring = "this is the function 'foo'",
+            .return_type = null,
+            // TODO: Check if this is okay
+            .args = &args,
+            .return_format = "i",
+            .return_python_type = "int",
+        },
 
-    try functions.put("bar", Function{
-        .name = "bar",
-        .docstring = "this is the function 'bar'",
-        .return_type = null,
-        // TODO: Check if this is okay
-        .args = &[_]Arg{},
-        .return_format = "i",
-        .return_python_type = "int",
-    });
+        .{
+            .name = "bar",
+            .docstring = "this is the function 'bar'",
+            .return_type = null,
+            // TODO: Check if this is okay
+            .args = &[_]Arg{},
+            .return_format = "i",
+            .return_python_type = "int",
+        },
+    };
 
-    try genPythonStubs(&writer, "testName", functions);
+    try genPythonStubs(&writer, "testName", &functions);
 
     const header = writer.buffered();
     try std.testing.expectEqualStrings(expected, header);

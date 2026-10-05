@@ -5,7 +5,7 @@ const src = @import("src");
 // I think there is probably a better way to access this?
 const config = @import("config");
 
-const src_file_path = config.src_file_path;
+// const src_file_path = config.src_file_path;
 const module_import_name = config.root_name;
 
 const Io = std.Io;
@@ -49,7 +49,10 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena;
 
     const input_args = try init.minimal.args.toSlice(arena.allocator());
-    std.debug.assert(input_args.len == 3);
+    print("{s} len: {d}\n", .{ input_args[1], input_args.len });
+    std.debug.assert(input_args.len == 4);
+
+    const src_file_path = input_args[1];
 
     var buffer: [2000]u8 = undefined;
     var w: *Io.Writer = undefined;
@@ -63,8 +66,8 @@ pub fn main(init: std.process.Init) !void {
     // NOTE: Probably a better way to do this
     const file_writer = true;
     if (file_writer) {
-        const output_file_path = input_args[1];
-        const stub_file_path = input_args[2];
+        const output_file_path = input_args[2];
+        const stub_file_path = input_args[3];
         print("output_file_path: {s}\n", .{output_file_path});
 
         output_file = try Io.Dir.cwd().createFile(io, output_file_path, .{});

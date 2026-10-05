@@ -18,6 +18,10 @@ pub fn add(
     return foo + bar;
 }
 
+test add {
+    try std.testing.expectEqual(10, add(3, 7));
+}
+
 /// Function to subtract two integers
 pub fn sub(
     /// The first number to sub
@@ -26,4 +30,8 @@ pub fn sub(
     bar: i32,
 ) i32 {
     return foo - bar;
+}
+
+test sub {
+    try std.testing.expectEqual(-4, sub(3, 7));
 }

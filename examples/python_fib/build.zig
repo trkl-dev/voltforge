@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
 
     const pip_install = b.addSystemCommand(&.{ "python3", "-m", "pip", "install" });
     pip_install.addArgs(&.{ "--no-index", "--force-reinstall" });
-    pip_install.addFileArg2(volt.wheel.source, .{});
+    pip_install.addFileArg2(volt.wheel_file.source, .{});
     pip_install.step.dependOn(volt.wheel_step);
 
     const py_test = b.addSystemCommand(&.{"python"});

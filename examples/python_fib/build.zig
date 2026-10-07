@@ -1,5 +1,6 @@
 const std = @import("std");
 const zon = @import("build.zig.zon");
+const voltforge = @import("voltforge");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -13,10 +14,9 @@ pub fn build(b: *std.Build) void {
 
     // ############ VOLTFORGE USAGE ############## //
     const wheels_step = b.step("wheels", "Build Python wheels");
-    const wheel = @import("voltforge").buildWheels(b, mod, @tagName(zon.name), zon.version);
-    wheels_step.dependOn(wheel.lib); // Want the lib built
-    wheels_step.dependOn(wheel.stubs); // Want the stubs generated
-    wheels_step.dependOn(wheel.dist); // Want the wheel built
+    const volt = voltforge.buildWheels(b, mod, @tagName(zon.name), zon.version);
+    wheels_step.dependOn(volt.lib_step); // Want the lib built
+    wheels_step.dependOn(volt.wheel_step); // Want the wheel built
     // ############ VOLTFORGE USAGE ############## //
 
     const test_step = b.step("test", "Run test suite");
@@ -27,10 +27,10 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     test_step.dependOn(&run_tests.step);
 
-    const pip_install = b.addSystemCommand(&.{ "python", "-m", "pip", "install" });
+    const pip_install = b.addSystemCommand(&.{ "python3", "-m", "pip", "install" });
     pip_install.addArgs(&.{ "--no-index", "--force-reinstall" });
-    pip_install.addFileArg2(wheel.whl, .{});
-    pip_install.step.dependOn(wheel.dist);
+    pip_install.addFileArg2(volt.wheel.source, .{});
+    pip_install.step.dependOn(volt.wheel_step);
 
     const py_test = b.addSystemCommand(&.{"python"});
     py_test.addArgs(&.{"main.py"});

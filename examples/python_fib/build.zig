@@ -15,8 +15,9 @@ pub fn build(b: *std.Build) void {
     // ############ VOLTFORGE USAGE ############## //
     const wheels_step = b.step("wheels", "Build Python wheels");
     const volt = voltforge.buildWheels(b, mod, @tagName(zon.name), zon.version);
-    wheels_step.dependOn(volt.lib_step); // Want the lib built
-    wheels_step.dependOn(volt.wheel_step); // Want the wheel built
+    wheels_step.dependOn(&volt.lib_file.step); // Want the lib built
+    wheels_step.dependOn(&volt.stub_file.step); // Want the lib built
+    wheels_step.dependOn(&volt.wheel_file.step); // Want the wheel built
     // ############ VOLTFORGE USAGE ############## //
 
     const test_step = b.step("test", "Run test suite");

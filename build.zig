@@ -23,6 +23,9 @@ pub fn build(b: *std.Build) void {
 pub const Wheels = struct {
     lib_file: *std.Build.Step.InstallFile,
     lib_step: *std.Build.Step,
+
+    stub_file: *std.Build.Step.InstallFile,
+
     wheel_file: *std.Build.Step.InstallFile,
     wheel_step: *std.Build.Step,
 };
@@ -76,11 +79,22 @@ pub fn buildWheels(b: *std.Build, module: *std.Build.Module, name: []const u8, v
 
     lib.linker_allow_shlib_undefined = true;
 
+    // NOTE: Currently this seems to be the only way to get the library with a name without a `lib` prefix.
+    // https://github.com/ziglang/zig/issues/2231
+    // No corresponding codeberg issues, should probably contribute a PR
+    const wf = b.addWriteFiles();
+    const lib_path_without_prefix = wf.addCopyFile(
+        lib.getEmittedBin(),
+        b.fmt("{s}.so", .{name}),
+    );
+
     // Install the compiled binary as a Python-importable module: zig-out/wheels/<name>.so
+    // QUES: Should we leave this as the lib-prefixed lib name and let the user rename if need be?
+    //  Might actually be better not to install this and just return the lib to the user to install
     const lib_file = b.addInstallFileWithDir(
         lib.getEmittedBin(),
         .{ .custom = "wheels" },
-        b.fmt("{s}.so", .{lib.name}),
+        b.fmt("{s}.so", .{name}),
     );
 
     const stub_file = b.addInstallFileWithDir(
@@ -93,8 +107,8 @@ pub fn buildWheels(b: *std.Build, module: *std.Build.Module, name: []const u8, v
         b,
         module,
         lib,
-        lib_file,
-        stub_file,
+        lib_path_without_prefix,
+        stub_output_file,
         name,
         version,
     );
@@ -102,6 +116,8 @@ pub fn buildWheels(b: *std.Build, module: *std.Build.Module, name: []const u8, v
     return Wheels{
         .lib_file = lib_file,
         .lib_step = &lib_file.step,
+
+        .stub_file = stub_file, // QUES: Should we just return the lazy path so the user can control install?
 
         .wheel_file = wheel_file,
         .wheel_step = &wheel_file.step,
@@ -120,8 +136,8 @@ fn buildWheel(
     b: *std.Build,
     module: *std.Build.Module,
     lib: *std.Build.Step.Compile,
-    lib_file: *std.Build.Step.InstallFile,
-    stub_file: *std.Build.Step.InstallFile,
+    lib_file: std.Build.LazyPath,
+    stub_file: std.Build.LazyPath,
     name: []const u8,
     version: []const u8,
 ) *std.Build.Step.InstallFile {
@@ -173,29 +189,17 @@ fn buildWheel(
 
     const build_wheel_run = b.addRunArtifact(build_wheel_exe);
     build_wheel_run.addFileArg(lib.getEmittedBin());
-    const wheel_output_dir = build_wheel_run.addOutputDirectoryArg2("dist-info", .{});
-
-    const wheel_dir = b.addInstallDirectory(.{
-        .source_dir = wheel_output_dir,
-        .install_dir = .{ .custom = "wheels" },
-        .install_subdir = b.fmt("{s}-{s}.dist-info", .{ name, version }),
-    });
+    const wheel_output_dir = build_wheel_run.addOutputDirectoryArg2(b.fmt("{s}-{s}.dist-info", .{ name, version }), .{});
 
     const wheel_name = b.fmt("{s}-{s}-{s}.whl", .{ name, version, tag });
     // TODO: We might want to be checking if python is available, and if we are in a virtual env maybe?
     // Using python to zip for now, since we know we will have it. Will bring in house at some point
     const zip_cmd = b.addSystemCommand(&.{ "python", "-m", "zipfile", "-c" });
-    zip_cmd.setCwd(b.graph.path(.install_prefix, "wheels"));
+    // QUES: Why does placing the outputFileArg _after_ addArgs result in nothing being generated?
     const zipped_wheel_output_file = zip_cmd.addOutputFileArg2(wheel_name, .{});
-    zip_cmd.addArgs(&.{
-        b.fmt("{s}.so", .{name}),
-        b.fmt("{s}.pyi", .{name}),
-        b.fmt("{s}-{s}.dist-info", .{ name, version }),
-    });
-
-    zip_cmd.step.dependOn(&lib_file.step);
-    zip_cmd.step.dependOn(&wheel_dir.step);
-    zip_cmd.step.dependOn(&stub_file.step);
+    zip_cmd.addFileArg2(lib_file, .{});
+    zip_cmd.addFileArg2(stub_file, .{});
+    zip_cmd.addDirectoryArg2(wheel_output_dir, .{});
 
     const zipped_wheel_file = b.addInstallFileWithDir(
         zipped_wheel_output_file,
